@@ -26,15 +26,13 @@ PHONE_CANDIDATE_RE = re.compile(
     r"""
     (?<!\w)
     (
-        (?:\+|00)?
-        [\d\(\)\-\s\.]{6,}
-        \d
+        (?:\+?7|8)
+        [\d\(\)\-\s]{10,20}
     )
     (?!\w)
     """,
     re.VERBOSE,
 )
-
 def extract_phone_candidates(text: str) -> List[str]:
     if not text:
         return []
@@ -49,15 +47,14 @@ def normalize_phone(raw: str) -> Optional[Dict[str, str]]:
 
     raw = raw.strip()
     d = digits_only(raw)
+    
+    # делаем строгий RU формат
+if len(d) == 11 and d.startswith("8"):
+    d = "7" + d[1:]
 
-    if len(d) < MIN_PHONE_DIGITS:
-        return None
-
-    if d.startswith("00") and len(d) > 2:
-        d = d[2:]
-
-    if len(d) < MIN_PHONE_DIGITS:
-        return None
+# принимаем только RU номера
+if len(d) != 11 or not d.startswith("7"):
+    return None
 
     strict_key = d
     fuzzy_key = d[-10:] if len(d) >= 10 else d
