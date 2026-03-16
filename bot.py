@@ -47,20 +47,20 @@ def normalize_phone(raw: str) -> Optional[Dict[str, str]]:
 
     raw = raw.strip()
     d = digits_only(raw)
-    
-    # делаем строгий RU формат
-if len(d) == 11 and d.startswith("8"):
-    d = "7" + d[1:]
 
-# принимаем только RU номера
-if len(d) != 11 or not d.startswith("7"):
-    return None
+    # делаем строгий RU формат
+    if len(d) == 11 and d.startswith("8"):
+        d = "7" + d[1:]
+
+    # принимаем только RU номера
+    if len(d) != 11 or not d.startswith("7"):
+        return None
 
     strict_key = d
-    fuzzy_key = d[-10:] if len(d) >= 10 else d
+    fuzzy_key = d
 
     return {
-        "display": "+" + d if raw.startswith("+") or raw.startswith("00") else d,
+        "display": "+7" + d[1:],
         "strict_key": strict_key,
         "fuzzy_key": fuzzy_key,
     }
