@@ -237,15 +237,15 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             message_text=text,
         )
 
-if exact_matches:
-    duplicate_count = len(exact_matches) + 1
-    replies.append(f"🚨 Дубль ({duplicate_count}): {display_phone}")
-elif fuzzy_matches:
-    duplicate_count = len(fuzzy_matches) + 1
-    replies.append(f"⚠️ Вероятный дубль ({duplicate_count}): {display_phone}")
+        if exact_matches:
+            duplicate_count = len(exact_matches) + 1
+            replies.append(f"🚨 Дубль ({duplicate_count}): {display_phone}")
+        elif fuzzy_matches:
+            duplicate_count = len(fuzzy_matches) + 1
+            replies.append(f"⚠️ Вероятный дубль ({duplicate_count}): {display_phone}")
 
-if replies:
-    await message.reply_text("\n\n".join(replies))
+    if replies:
+        await message.reply_text("\n\n".join(replies))
 
 async def post_init(application: Application) -> None:
     await init_db()
