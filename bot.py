@@ -237,14 +237,12 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             message_text=text,
         )
 
-        if exact_matches:
-            prev = exact_matches[0]
-            who = format_user(prev[3], prev[4])
-            replies.append(f"🚨 Дубль: {display_phone}\nУже был у {who}")
-        elif fuzzy_matches:
-            prev = fuzzy_matches[0]
-            who = format_user(prev[4], prev[5])
-            replies.append(f"⚠️ Вероятный дубль: {display_phone}\nПохожий номер уже был у {who}")
+if exact_matches:
+    duplicate_count = len(exact_matches) + 1
+    replies.append(f"🚨 Дубль ({duplicate_count}): {display_phone}")
+elif fuzzy_matches:
+    duplicate_count = len(fuzzy_matches) + 1
+    replies.append(f"⚠️ Вероятный дубль ({duplicate_count}): {display_phone}")
 
     if replies:
         await message.reply_text("\n\n".join(replies))
