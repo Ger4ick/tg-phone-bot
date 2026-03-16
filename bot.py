@@ -161,7 +161,7 @@ FROM phone_mentions
             WHERE strict_key = ?
               AND NOT (chat_id = ? AND message_id = ?)
             ORDER BY id ASC
-            LIMIT 5
+            LIMIT 1000
             """,
             (strict_key, current_chat_id, current_message_id),
         )
@@ -177,7 +177,7 @@ async def find_fuzzy_duplicates(fuzzy_key: str, strict_key: str, current_chat_id
               AND strict_key != ?
               AND NOT (chat_id = ? AND message_id = ?)
             ORDER BY id ASC
-            LIMIT 5
+            LIMIT 1000
             """,
             (fuzzy_key, strict_key, current_chat_id, current_message_id),
         )
