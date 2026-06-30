@@ -1,98 +1,66 @@
 import re
+import os
 import logging
 import aiosqlite
-from typing import List, Dict, Optional
+from typing import List, Optional, Dict
 
 from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = "8799600206:AAGBPTbpC_NcM0SIRHoCFuHf62DyqwPPwKs"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8799600206:AAGBPTbpC_NcM0SIRHoCFuHf62DyqwPPwKs")
 DB_PATH = "phones.db"
-MIN_PHONE_DIGITS = 7
 
 logging.basicConfig(
     format="%(asctime)s | %(name)s | %(levelname)s | %(message)s",
     level=logging.INFO,
 )
-logger = logging.getLogger(__name__)
 
-PHONE_CANDIDATE_RE = re.compile(
-    r"""
-    (?<!\w)
-    (
-        (?:\+?7|8)
-        [\d\(\)\-\s]{10,20}
-    )
-    (?!\w)
-    """,
-    re.VERBOSE,
-)
-def extract_phone_candidates(text: str) -> List[str]:
-    if not text:
-        return []
-    return PHONE_CANDIDATE_RE.findall(text)
+PHONE_RE = re.compile(r"(?<!\w)((?:\+?7|8)[\d\(\)\-\s]{10,20})(?!\w)")
+
 
 def digits_only(value: str) -> str:
     return re.sub(r"\D", "", value)
 
-def normalize_phone(raw: str) -> Optional[Dict[str, str]]:
-    if not raw:
+
+def normalize_phone(raw: str) -> Optional[str]:
+    digits = digits_only(raw)
+
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+
+    if len(digits) != 11 or not digits.startswith("7"):
         return None
 
-    raw = raw.strip()
-    d = digits_only(raw)
+    return digits
 
-    # делаем строгий RU формат
-    if len(d) == 11 and d.startswith("8"):
-        d = "7" + d[1:]
 
-    # принимаем только RU номера
-    if len(d) != 11 or not d.startswith("7"):
-        return None
-
-    strict_key = d
-    fuzzy_key = d
-
-    return {
-        "display": "+7" + d[1:],
-        "strict_key": strict_key,
-        "fuzzy_key": fuzzy_key,
-    }
-
-def extract_normalized_phones(text: str) -> List[Dict[str, str]]:
-    candidates = extract_phone_candidates(text)
+def extract_phones(text: str) -> List[Dict[str, str]]:
     result = []
     seen = set()
 
-    for candidate in candidates:
-        normalized = normalize_phone(candidate)
+    for raw in PHONE_RE.findall(text or ""):
+        normalized = normalize_phone(raw)
         if not normalized:
             continue
 
-        dedupe_key = (normalized["strict_key"], normalized["fuzzy_key"])
-        if dedupe_key in seen:
+        if normalized in seen:
             continue
 
-        seen.add(dedupe_key)
-        result.append(normalized)
+        seen.add(normalized)
+        result.append({
+            "key": normalized,
+            "display": "+7" + normalized[1:]
+        })
 
     return result
+
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS phone_mentions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    strict_key TEXT NOT NULL,
-    fuzzy_key TEXT NOT NULL,
-    display_phone TEXT NOT NULL,
-    raw_phone TEXT NOT NULL,
     chat_id INTEGER NOT NULL,
-    chat_type TEXT,
+    phone_key TEXT NOT NULL,
+    display_phone TEXT NOT NULL,
     message_id INTEGER NOT NULL,
     user_id INTEGER,
     username TEXT,
@@ -102,25 +70,35 @@ CREATE TABLE IF NOT EXISTS phone_mentions (
 );
 """
 
-CREATE_INDEXES_SQL = [
-    "CREATE INDEX IF NOT EXISTS idx_phone_mentions_strict_key ON phone_mentions(strict_key);",
-    "CREATE INDEX IF NOT EXISTS idx_phone_mentions_fuzzy_key ON phone_mentions(fuzzy_key);",
-]
 
 async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(CREATE_TABLE_SQL)
-        for sql in CREATE_INDEXES_SQL:
-            await db.execute(sql)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_phone ON phone_mentions(chat_id, phone_key);"
+        )
         await db.commit()
 
-async def save_phone_mention(
-    strict_key: str,
-    fuzzy_key: str,
-    display_phone: str,
-    raw_phone: str,
+
+async def phone_exists_in_chat(chat_id: int, phone_key: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT id
+            FROM phone_mentions
+            WHERE chat_id = ? AND phone_key = ?
+            LIMIT 1
+            """,
+            (chat_id, phone_key),
+        )
+        row = await cursor.fetchone()
+        return row is not None
+
+
+async def save_phone(
     chat_id: int,
-    chat_type: str,
+    phone_key: str,
+    display_phone: str,
     message_id: int,
     user_id: Optional[int],
     username: Optional[str],
@@ -131,18 +109,15 @@ async def save_phone_mention(
         await db.execute(
             """
             INSERT INTO phone_mentions (
-                strict_key, fuzzy_key, display_phone, raw_phone,
-                chat_id, chat_type, message_id, user_id, username, full_name, message_text
+                chat_id, phone_key, display_phone, message_id,
+                user_id, username, full_name, message_text
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                strict_key,
-                fuzzy_key,
-                display_phone,
-                raw_phone,
                 chat_id,
-                chat_type,
+                phone_key,
+                display_phone,
                 message_id,
                 user_id,
                 username,
@@ -152,110 +127,65 @@ async def save_phone_mention(
         )
         await db.commit()
 
-async def find_exact_duplicates(strict_key: str, current_chat_id: int, current_message_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT display_phone, chat_id, message_id, username, full_name, created_at
-FROM phone_mentions
-            WHERE strict_key = ?
-            AND chat_id = ?
-            AND NOT (chat_id = ? AND message_id = ?)
-            ORDER BY id ASC
-            LIMIT 1000
-            """,
-            (strict_key, current_chat_id, current_chat_id, current_message_id),
-        )
-        return await cursor.fetchall()
-
-async def find_fuzzy_duplicates(fuzzy_key: str, strict_key: str, current_chat_id: int, current_message_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT display_phone, strict_key, chat_id, message_id, username, full_name, created_at
-            FROM phone_mentions
-            WHERE fuzzy_key = ?
-              AND chat_id = ?
-              AND strict_key != ?
-              AND NOT (chat_id = ? AND message_id = ?)
-            ORDER BY id ASC
-            LIMIT 1000
-            """,
-            (fuzzy_key, current_chat_id, strict_key, current_chat_id, current_message_id),
-        )
-        return await cursor.fetchall()
-
-def format_user(username: Optional[str], full_name: Optional[str]) -> str:
-    if username:
-        return f"@{username}"
-    if full_name:
-        return full_name
-    return "unknown"
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "Бот запущен. Просто отправь в чат сообщение с номером телефона."
-    )
+    if update.message:
+        await update.message.reply_text(
+            "Бот запущен. Отправь номер телефона — я проверю, дубль он или нет."
+        )
+
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
+
     if not message or not message.text:
         return
 
-    text = message.text
-    found_phones = extract_normalized_phones(text)
+    phones = extract_phones(message.text)
 
-    if not found_phones:
+    if not phones:
         return
 
     user = message.from_user
-    username = user.username if user else None
-    full_name = user.full_name if user else None
-    user_id = user.id if user else None
-    chat = message.chat
-    chat_type = chat.type if chat else None
-
     replies = []
 
-    for item in found_phones:
-        strict_key = item["strict_key"]
-        fuzzy_key = item["fuzzy_key"]
-        display_phone = item["display"]
+    for phone in phones:
+        phone_key = phone["key"]
+        display_phone = phone["display"]
 
-        exact_matches = await find_exact_duplicates(strict_key, message.chat_id, message.message_id)
-        fuzzy_matches = await find_fuzzy_duplicates(fuzzy_key, strict_key, message.chat_id, message.message_id)
+        exists = await phone_exists_in_chat(message.chat_id, phone_key)
 
-        await save_phone_mention(
-            strict_key=strict_key,
-            fuzzy_key=fuzzy_key,
-            display_phone=display_phone,
-            raw_phone=display_phone,
-            chat_id=message.chat_id,
-            chat_type=chat_type,
-            message_id=message.message_id,
-            user_id=user_id,
-            username=username,
-            full_name=full_name,
-            message_text=text,
-        )
-
-        if exact_matches:
+        if exists:
             replies.append(f"🚨 Дубль: {display_phone}")
         else:
+            await save_phone(
+                chat_id=message.chat_id,
+phone_key=phone_key,
+                display_phone=display_phone,
+                message_id=message.message_id,
+                user_id=user.id if user else None,
+                username=user.username if user else None,
+                full_name=user.full_name if user else None,
+                message_text=message.text,
+            )
             replies.append(f"✅ Не дубль: {display_phone}")
 
-    if replies:
-        await message.reply_text("\n\n".join(replies))
+    await message.reply_text("\n".join(replies))
+
 
 async def post_init(application: Application) -> None:
     await init_db()
-    logger.info("База данных готова.")
+    logging.info("База данных готова.")
+
 
 def main() -> None:
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+
     app.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     main()
