@@ -159,11 +159,12 @@ async def find_exact_duplicates(strict_key: str, current_chat_id: int, current_m
             SELECT display_phone, chat_id, message_id, username, full_name, created_at
 FROM phone_mentions
             WHERE strict_key = ?
-              AND NOT (chat_id = ? AND message_id = ?)
+            AND chat_id = ?
+            AND NOT (chat_id = ? AND message_id = ?)
             ORDER BY id ASC
             LIMIT 1000
             """,
-            (strict_key, current_chat_id, current_message_id),
+            (strict_key, current_chat_id, current_chat_id, current_message_id),
         )
         return await cursor.fetchall()
 
@@ -174,12 +175,13 @@ async def find_fuzzy_duplicates(fuzzy_key: str, strict_key: str, current_chat_id
             SELECT display_phone, strict_key, chat_id, message_id, username, full_name, created_at
             FROM phone_mentions
             WHERE fuzzy_key = ?
+              AND chat_id = ?
               AND strict_key != ?
               AND NOT (chat_id = ? AND message_id = ?)
             ORDER BY id ASC
             LIMIT 1000
             """,
-            (fuzzy_key, strict_key, current_chat_id, current_message_id),
+            (fuzzy_key, current_chat_id, strict_key, current_chat_id, current_message_id),
         )
         return await cursor.fetchall()
 
@@ -238,11 +240,9 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
 
         if exact_matches:
-            duplicate_count = len(exact_matches) + 1
-            replies.append(f"🚨 Дубль ({duplicate_count}): {display_phone}")
-        elif fuzzy_matches:
-            duplicate_count = len(fuzzy_matches) + 1
-            replies.append(f"⚠️ Вероятный дубль ({duplicate_count}): {display_phone}")
+            replies.append(f"🚨 Дубль: {display_phone}")
+        else:
+            replies.append(f"✅ Не дубль: {display_phone}")
 
     if replies:
         await message.reply_text("\n\n".join(replies))
