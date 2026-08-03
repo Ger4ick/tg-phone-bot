@@ -7,7 +7,7 @@ from typing import List, Optional, Dict
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8799600206:AAGBPTbpC_NcM0SIRHoCFuHf62DyqwPPwKs")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8799600206:AAGASV-KUEn1j3OIiYCTStuAhAqadHNAsjg")
 DB_PATH = "phones.db"
 
 logging.basicConfig(
